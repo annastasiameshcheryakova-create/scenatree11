@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebXR Full Solar System AR</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: sans-serif;
+        }
+    </style>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+        let camera, scene, renderer;
+        let solarSystem, sun;
+        
+        // Массив для хранения созданных планет, чтобы анимировать их в цикле
+        const planets = [];
+
+        // Конфигурация планет: радиус, цвет, расстояние от Солнца, скорость орбиты, скорость вращения
+        const planetsData = [
+            { name: 'Mercury', radius: 0.08, color: 0x8a8a8a, dist: 1.2, speed: 0.03, rotSpeed: 0.01 },
+            { name: 'Venus',   radius: 0.18, color: 0xe3bb76, dist: 1.7, speed: 0.02, rotSpeed: 0.005 },
+            { name: 'Earth',   radius: 0.20, color: 0x0066ff, dist: 2.3, speed: 0.015, rotSpeed: 0.02 },
+            { name: 'Mars',    radius: 0.14, color: 0xcc4400, dist: 2.9, speed: 0.01, rotSpeed: 0.018 },
+            { name: 'Jupiter', radius: 0.42, color: 0xd4a373, dist: 3.9, speed: 0.007, rotSpeed: 0.04 },
+            { name: 'Saturn',  radius: 0.35, color: 0xe2bf7d, dist: 5.1, speed: 0.005, rotSpeed: 0.035, hasRings: true },
+            { name: 'Uranus',  radius: 0.26, color: 0x73c7e6, dist: 6.2, speed: 0.003, rotSpeed: 0.03 },
+            { name: 'Neptune', radius: 0.24, color: 0x274687, dist: 7.2, speed: 0.002, rotSpeed: 0.03 }
+        ];
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            // Освещение (необходимо для MeshStandardMaterial)
+            const ambientLight = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1.2);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            dirLight.position.set(5, 10, 7);
+            scene.add(dirLight);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['local'] }));
+
+            // Корневой контейнер всей системы
+            solarSystem = new THREE.Group();
+            // Смещаем на 1.5 метра вперед и чуть ниже уровня глаз
+            solarSystem.position.set(0, -0.3, -1.5);
+            // Масштаб уменьшен до 0.12, чтобы даже Нептун (на расстоянии 7.2) вписывался в пределы ~85 см от центра
+            solarSystem.scale.set(0.12, 0.12, 0.12);
+            scene.add(solarSystem);
+
+            // Создаем Солнце
+            const sunGeo = new THREE.SphereGeometry(0.6, 32, 32);
+            const sunMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+            sun = new THREE.Mesh(sunGeo, sunMat);
+            solarSystem.add(sun);
+
+            // Генерация планет из массива данных
+            planetsData.forEach(data => {
+                // Создаем невидимую группу-орбиту, которая центрируется в Солнце
+                const orbitGroup = new THREE.Group();
+                solarSystem.add(orbitGroup);
+
+                // Сама планета
+                const planetGeo = new THREE.SphereGeometry(data.radius, 32, 32);
+                const planetMat = new THREE.MeshStandardMaterial({ color: data.color, roughness: 0.6 });
+                const planetMesh = new THREE.Mesh(planetGeo, planetMat);
+                
+                // Отодвигаем планету по оси X на ее дистанцию от Солнца
+                planetMesh.position.x = data.dist;
+                orbitGroup.add(planetMesh);
+
+                // Если это Сатурн, строим кольца
+                if (data.hasRings) {
+                    const ringGeo = new THREE.RingGeometry(data.radius * 1.4, data.radius * 2.3, 32);
+                    // Поворачиваем кольцо горизонтально
+                    ringGeo.rotateX(Math.PI / 2);
+                    const ringMat = new THREE.MeshStandardMaterial({ 
+                        color: 0xbfa37a, 
+                        side: THREE.DoubleSide, 
+                        transparent: true, 
+                        opacity: 0.8 
+                    });
+                    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                    // Добавляем кольцо как дочерний объект планеты (оно будет двигаться вместе с ней)
+                    planetMesh.add(ringMesh);
+                }
+
+                // Сохраняем ссылки для анимации
+                planets.push({
+                    orbit: orbitGroup,
+                    mesh: planetMesh,
+                    speed: data.speed,
+                    rotSpeed: data.rotSpeed
+                });
+            });
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            renderer.setAnimationLoop(render);
+        }
+
+        function render() {
+            // Вращение Солнца
+            sun.rotation.y += 0.003;
+
+            // Анимация всех планет одной командой через forEach
+            planets.forEach(p => {
+                p.orbit.rotation.y += p.speed;    // Движение по орбите вокруг Солнца
+                p.mesh.rotation.y += p.rotSpeed;  // Собственное вращение планеты вокруг оси
+            });
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
